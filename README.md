@@ -4,7 +4,7 @@ BLE SMURFS
 BLE SMURFS is mbed enabled development board with Bluetooth Low Energy. It's optimized for low power and wearable application.
 The BLE SMURFS MONITOR will help lower the power consumption of your application with the BLE SMURFS.
 
-![BLE SMURFS MONITOR](utils/ble_smurfs_monitor_preview.png)
+![BLE SMURFS MONITOR](utils/ble_smurfs_monitor_preview_linux.png)
 
 ----
 
