@@ -28,7 +28,7 @@ class SerialThread(QThread):
         port = None
         for p in list_ports.comports():
             print(p)
-            if p[2].upper().startswith('USB VID:PID=0D28:0204'):
+            if p[2].upper().startswith('USB VID:PID=0D28:0204') or p[2].upper().startswith('USB VID:PID=D28:204'):
                 port = p[0]
                 break
                 
