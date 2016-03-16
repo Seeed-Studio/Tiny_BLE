@@ -8,15 +8,15 @@ Plot realtime power comsumption of BLE SMURFS
 import sys
 import serial
 from serial.tools import list_ports
-import time
-from collections import deque
 from PySide.QtCore import QThread, Signal, Slot, Qt
 from PySide.QtGui import QApplication, QMainWindow, QWidget, QHBoxLayout, QMessageBox, QKeyEvent
 import pyqtgraph as pg
+import numpy as np
 
+data = np.empty(1000)
+data_index = 0
 
 class SerialThread(QThread):
-    data = Signal(int)
     error = Signal(int)
     
     def __init__(self, parent=None):
@@ -24,6 +24,8 @@ class SerialThread(QThread):
         self.exit = False
         
     def run(self):
+        global data, data_index
+
         print('--- serial thread started ---')
         port = None
         for p in list_ports.comports():
@@ -32,7 +34,7 @@ class SerialThread(QThread):
                 port = p[0]
                 break
                 
-        if port == None:
+        if not port:
             print('no device available')
             self.error.emit(1)
             return
@@ -44,17 +46,21 @@ class SerialThread(QThread):
                                parity='N',
                                stopbits=1,
                                timeout=1)
-        while self.exit == False:
+        while not self.exit:
             try:
                 line = device.readline()
-                self.data.emit(int(line))
+                data[data_index] = int(line) / 1000.0  # uA to mA
+                data_index += 1
+                if data_index >= data.shape[0]:
+                    tmp = data
+                    data = np.empty(data.shape[0] * 2)
+                    data[:tmp.shape[0]] = tmp
             except IOError as e:
-                print('io error')
+                print('io error: %s', e)
                 self.error.emit(2)
                 break
-            except ValueError as e:
-                self.error.emit(3)
-                break
+            except ValueError:
+                print('invalid line')
                 
         device.close()
         print('--- serial thread finished')
@@ -62,21 +68,21 @@ class SerialThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super(MainWindow, self).__init__(parent)
-        self.setWindowTitle('BLE SMURFS MONITOR')
+        self.setWindowTitle('Tiny BLE Monitor')
         self.resize(800, 500)
-        cwidget = QWidget()
-        self.setCentralWidget(cwidget)
+        self.cwidget = QWidget()
+        self.setCentralWidget(self.cwidget)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        cwidget.setLayout(layout)
+        self.cwidget.setLayout(layout)
         self.pwidget = pg.PlotWidget()
         layout.addWidget(self.pwidget)
         
         self.pwidget.setTitle(title="press 'space' to freeze/resume")
         self.pwidget.setLabel('left', 'I', units='mA')
-        self.pwidget.setLabel('bottom', 't', units='s')
+        self.pwidget.setLabel('bottom', 't')
         self.pwidget.showButtons()
-        self.pwidget.setXRange(0, 60)
+        self.pwidget.setXRange(0, 3000)
         self.pwidget.setYRange(0, 16)
         # self.pwidget.enableAutoRange(axis=pg.ViewBox.YAxis)
         line = pg.InfiniteLine(pos=1.0, angle=0, movable=True, bounds=[0, 200])
@@ -89,16 +95,15 @@ class MainWindow(QMainWindow):
         # plotitem.setLimits(xMin=-1, yMin=-1, minXRange=-1, minYRange=-1) # require pyqtgraph 0.9.9+
         
         self.thread = SerialThread()
-        self.thread.error.connect(self.onError)
-        self.thread.data.connect(self.update)
+        self.thread.error.connect(self.handle_error)
         self.thread.start()
-        self.start_time = time.time()
-        self.x = deque(maxlen=8196)
-        self.y = deque(maxlen=8196)
         self.freeze = False
+        self.timer = pg.QtCore.QTimer()
+        self.timer.timeout.connect(self.update)
+        self.timer.start(50)
         
     @Slot(int)
-    def onError(self, error):
+    def handle_error(self, error):
         flags = QMessageBox.Abort | QMessageBox.StandardButton.Retry
         message = 'No device available!'
         if error > 1:
@@ -109,25 +114,20 @@ class MainWindow(QMainWindow):
             self.thread.start()
         else:
             self.close()
-        
-    @Slot(int)
-    def update(self, data):
-        t = time.time() - self.start_time
-        data = data / 1000.0
-        print('%f: %f' % (t, data))
-        self.x.append(t)
-        self.y.append(data)
-        
+
+    def update(self):
+        global data, data_index
+
         if not self.freeze:
-            range = self.pwidget.viewRange()
-            if t >= range[0][1]:
-                self.pwidget.setXRange(t, t + range[0][1] - range[0][0])
-            self.plot.setData(x=list(self.x), y=list(self.y))
+            r = self.pwidget.viewRange()
+            if data_index >= r[0][1]:
+                self.pwidget.setXRange(data_index, data_index + r[0][1] - r[0][0])
+            self.plot.setData(data[:data_index])
         
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_Escape:
-            self.pwidget.setXRange(self.x[0], self.x[len(self.x) - 1] + 8)
+            self.pwidget.setXRange(0, data_index + 1000)
             self.pwidget.enableAutoRange(axis=pg.ViewBox.YAxis)
         elif key == Qt.Key_Space:
             self.freeze = not self.freeze
@@ -136,7 +136,7 @@ class MainWindow(QMainWindow):
         
     def closeEvent(self, event):
         if self.thread.isRunning():
-            self.thread.exit = True;
+            self.thread.exit = True
             while self.thread.isRunning():
                 pass
 
